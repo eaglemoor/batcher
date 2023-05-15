@@ -1,3 +1,5 @@
+[![Go Coverage](https://github.com/eaglemoor/batcher/wiki/coverage.svg)](https://raw.githack.com/wiki/eaglemoor/batcher/coverage.html)
+
 # batcher
 
 Tiny batcher for GraphQL Dataloader or Batch user request.
