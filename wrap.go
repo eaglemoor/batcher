@@ -27,13 +27,14 @@ func wrapHandler[K comparable, V any](cache Cache[K, V], timeout time.Duration, 
 }
 
 func (w *wrapper[K, V]) Handle(ctx context.Context, keys []K) []*Result[V] {
-	// TODO using cache
-
 	// Detache ctx if needed
 	if w.timeout > 0 {
 		var cancel func()
 		ctx, cancel = context.WithTimeout(DetachedContext(ctx), w.timeout)
 		defer cancel()
 	}
+
+	// TODO use cache
+
 	return w.handler(ctx, keys)
 }
