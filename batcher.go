@@ -93,6 +93,7 @@ type waiter[K comparable, V any] struct {
 	res chan *Result[V]
 }
 
+// Load load data with key and return value and error
 func (b *batcher[K, V]) Load(ctx context.Context, key K) (V, error) {
 	waiter := b.load(ctx, key)
 
@@ -103,6 +104,38 @@ func (b *batcher[K, V]) Load(ctx context.Context, key K) (V, error) {
 		var v V
 		return v, ctx.Err()
 	}
+}
+
+// LoadMany load slice data and return value and error map
+func (b *batcher[K, V]) LoadMany(ctx context.Context, keys []K) (map[K]V, map[K]error) {
+	data := make(map[K]V, len(keys))
+	errors := make(map[K]error, len(keys))
+
+	waiterList := make(map[K]<-chan *Result[V], len(keys))
+	var ok bool
+	for _, key := range keys {
+		if _, ok = waiterList[key]; ok {
+			continue
+		}
+
+		waiterList[key] = b.load(ctx, key)
+	}
+
+	// Need read all channel
+	for key, wt := range waiterList {
+		select {
+		case res := <-wt:
+			if res.Err != nil {
+				errors[key] = res.Err
+			} else {
+				data[key] = res.Value
+			}
+		case <-ctx.Done():
+			errors[key] = ctx.Err()
+		}
+	}
+
+	return data, errors
 }
 
 func (b *batcher[K, V]) load(ctx context.Context, key K) <-chan *Result[V] {
@@ -123,10 +156,6 @@ func (b *batcher[K, V]) load(ctx context.Context, key K) <-chan *Result[V] {
 	b.runBatch(MainBatcher)
 
 	return c
-}
-
-func (b *batcher[K, V]) loadMany(ctx context.Context, key []K) <-chan []*Result[V] {
-	return nil
 }
 
 // runBatch checks the number of valid threads and pending data and starts a new thread to process the data.

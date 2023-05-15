@@ -28,6 +28,32 @@ func TestBatchLoad_Ok(t *testing.T) {
 	assert.Equal(t, "value_val1", item)
 }
 
+func TestBatchLoadMany_Ok(t *testing.T) {
+	calls := make([][]string, 0, 10)
+	m := sync.Mutex{}
+
+	handlerFn := func(ctx context.Context, keys []string) []*Result[string] {
+		m.Lock()
+		calls = append(calls, keys)
+		m.Unlock()
+
+		result := make([]*Result[string], 0, len(keys))
+		for _, key := range keys {
+			result = append(result, &Result[string]{Value: "value_" + key})
+		}
+
+		return result
+	}
+
+	batcher := New(handlerFn)
+	items, errs := batcher.LoadMany(context.Background(), []string{"val1", "val2", "val3"})
+	assert.Empty(t, errs)
+	assert.Equal(t, map[string]string{"val1": "value_val1", "val2": "value_val2", "val3": "value_val3"}, items)
+
+	// TODO need to debug
+	assert.Equal(t, [][]string{{"val1"}, {"val2", "val3"}}, calls)
+}
+
 func TestBatchLoad_MinBatch10(t *testing.T) {
 	calls := make([][]string, 0, 10)
 	var mu sync.Mutex
