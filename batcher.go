@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"sync"
 	"time"
+
+	"golang.org/x/time/rate"
 )
 
 const (
@@ -15,11 +17,19 @@ const (
 	DefaultTicker       = 17 * time.Millisecond
 )
 
+type batcherType int
+
+const (
+	MainBatcher batcherType = iota
+	TimerBatcher
+)
+
 type Result[V any] struct {
 	Value V
 	Err   error
 }
 
+// New create new batcher
 func New[K comparable, V any](handler func(ctx context.Context, keys []K) []*Result[V], opts ...Option[K, V]) *batcher[K, V] {
 	o := &opt[K, V]{
 		MaxBatchSize: DefaultMaxBatchSize,
@@ -43,7 +53,7 @@ func New[K comparable, V any](handler func(ctx context.Context, keys []K) []*Res
 		pending: make([]waiter[K, V], 0, o.MaxBatchSize),
 		cancel:  cancel,
 	}
-	go b.timer()
+	go b.batchTicker()
 
 	return b
 }
@@ -59,39 +69,21 @@ type batcher[K comparable, V any] struct {
 
 	nHandlers int
 	wg        sync.WaitGroup
-	ticker    time.Time
 
 	cancel   func()
 	shutdown bool
 }
 
-// ticker for catch items by timeout
-func (b *batcher[K, V]) timer() {
-	ticker := time.NewTicker(b.opt.Ticker)
+// batchTicker start b.runBatch every b.opt.Ticker time for process stuck data
+func (b *batcher[K, V]) batchTicker() {
+	limiter := rate.NewLimiter(rate.Every(b.opt.Ticker), 1)
+	for limiter.Wait(b.ctx) == nil {
+		func() {
+			b.mu.Lock()
+			defer b.mu.Unlock()
 
-	for {
-		select {
-		case <-b.ctx.Done():
-			return
-		case <-ticker.C:
-			func() {
-				b.mu.Lock()
-				defer b.mu.Unlock()
-
-				if b.nHandlers < b.opt.MaxHandlers {
-					batch := b.nextBatch()
-					// log.Printf("batch 17ms %#v\n", batch)
-					if batch != nil {
-						b.wg.Add(1)
-						go func() {
-							b.callHandlers(batch)
-							b.wg.Done()
-						}()
-						b.nHandlers++
-					}
-				}
-			}()
-		}
+			b.runBatch(TimerBatcher)
+		}()
 	}
 }
 
@@ -115,49 +107,55 @@ func (b *batcher[K, V]) Load(ctx context.Context, key K) (V, error) {
 
 func (b *batcher[K, V]) load(ctx context.Context, key K) <-chan *Result[V] {
 	b.mu.Lock()
-	defer func() {
-		b.mu.Unlock()
-	}()
+	defer b.mu.Unlock()
 
 	c := make(chan *Result[V], 1)
 
 	if b.shutdown {
 		c <- &Result[V]{Err: errors.New("batcher: shut down")}
+		close(c)
 
 		return c
 	}
 
 	b.pending = append(b.pending, waiter[K, V]{ctx: ctx, key: key, res: c})
 
-	if b.nHandlers < b.opt.MaxHandlers {
-		batch := b.nextBatch()
-		if batch != nil {
-			b.wg.Add(1)
-			go func() {
-				b.callHandlers(batch)
-				b.wg.Done()
-			}()
-			b.nHandlers++
-		}
-	}
+	b.runBatch(MainBatcher)
 
 	return c
 }
 
-func (b *batcher[K, V]) nextBatch() []waiter[K, V] {
-	now := time.Now()
+func (b *batcher[K, V]) loadMany(ctx context.Context, key []K) <-chan []*Result[V] {
+	return nil
+}
 
-	if b.ticker.IsZero() {
-		b.ticker = now
+// runBatch checks the number of valid threads and pending data and starts a new thread to process the data.
+// b.mu must be lock before
+func (b *batcher[K, V]) runBatch(btype batcherType) {
+	// If the number of threads is the maximum, we do not create a new one.
+	// We do not create a batcher "TimerBatcher", because the maximum number of threads shows
+	// the optimal operation of the system (all keys are taken)
+	if b.nHandlers >= b.opt.MaxHandlers {
+		return
 	}
 
-	if len(b.pending) < b.opt.MinBatchSize || now.Sub(b.ticker).Milliseconds() < b.opt.Ticker.Milliseconds() {
+	batch := b.nextBatch(btype)
+	if len(batch) > 0 {
+		b.wg.Add(1)
+		go func() {
+			b.callHandlers(btype, batch)
+			b.wg.Done()
+		}()
+		b.nHandlers++
+	}
+}
+
+// nextBatch fetches data from pending.
+// b.mu must be lock before
+func (b *batcher[K, V]) nextBatch(btype batcherType) (bch []waiter[K, V]) {
+	if len(b.pending) < b.opt.MinBatchSize && btype != TimerBatcher {
 		return nil
 	}
-
-	defer func() {
-		b.ticker = now
-	}()
 
 	// Send all
 	if b.opt.MaxBatchSize == 0 || len(b.pending) <= b.opt.MaxBatchSize {
@@ -180,8 +178,10 @@ func (b *batcher[K, V]) nextBatch() []waiter[K, V] {
 	return batch
 }
 
-func (b *batcher[K, V]) callHandlers(batch []waiter[K, V]) {
-	for batch != nil {
+// callHandlers prepare context, slice of keys and run user handler.
+// After processing the batch tries to get a new data packet. If pending data is empty
+func (b *batcher[K, V]) callHandlers(btype batcherType, batch []waiter[K, V]) {
+	for len(batch) > 0 {
 		ctx := context.Background()
 		if len(batch) > 0 {
 			ctx = batch[0].ctx
@@ -207,16 +207,24 @@ func (b *batcher[K, V]) callHandlers(batch []waiter[K, V]) {
 
 			for _, item := range batch {
 				item.res <- err
+				close(item.res)
 			}
 		} else {
 			for i := range batch {
 				batch[i].res <- items[i]
+				close(batch[i].res)
 			}
 		}
 
 		b.mu.Lock()
-		batch = b.nextBatch()
-		if batch == nil {
+
+		// At the first start TimerBatcher takes all the data from pending, the size of which is less than the minimum size batch size.
+		// In order for this batcher to work according to the general rules in the future, we change its type.
+		if btype == TimerBatcher {
+			btype = MainBatcher
+		}
+		batch = b.nextBatch(btype)
+		if len(batch) == 0 {
 			b.nHandlers--
 		}
 		b.mu.Unlock()
