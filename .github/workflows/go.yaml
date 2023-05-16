@@ -34,9 +34,6 @@ jobs:
       - name: Test
         run: go test -race -coverprofile=coverage.out -covermode=atomic ./...
       
-      - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v3
-      
       - name: Archive production artifacts
         uses: actions/upload-artifact@v3
         with:
