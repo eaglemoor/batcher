@@ -2,9 +2,11 @@ package batcher
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -56,19 +58,48 @@ func TestBatchLoadMany_Ok(t *testing.T) {
 
 		result := make([]*Result[string], 0, len(keys))
 		for _, key := range keys {
-			result = append(result, &Result[string]{Value: "value_" + key})
+			raw := &Result[string]{}
+
+			if !strings.HasPrefix(key, "err") {
+				raw.Value = "value_" + key
+			} else {
+				raw.Err = fmt.Errorf("err_%s", key)
+			}
+
+			result = append(result, raw)
 		}
 
 		return result
 	}
 
 	batcher := New(handlerFn)
-	items, errs := batcher.LoadMany(context.Background(), []string{"val1", "val2", "val3"})
-	assert.Empty(t, errs)
-	assert.Equal(t, map[string]string{"val1": "value_val1", "val2": "value_val2", "val3": "value_val3"}, items)
 
-	// TODO need to debug
-	assert.Equal(t, [][]string{{"val1"}, {"val2", "val3"}}, calls)
+	t.Run("simple", func(t *testing.T) {
+		items, errs := batcher.LoadMany(context.Background(), []string{"val1", "val2", "val3"})
+		assert.Empty(t, errs)
+		assert.Equal(t, map[string]string{"val1": "value_val1", "val2": "value_val2", "val3": "value_val3"}, items)
+
+		// TODO need to debug
+		assert.Equal(t, [][]string{{"val1"}, {"val2", "val3"}}, calls)
+	})
+
+	t.Run("double keys", func(t *testing.T) {
+		items, errs := batcher.LoadMany(context.Background(), []string{"val2", "val2", "val3"})
+		assert.Empty(t, errs)
+		assert.Equal(t, map[string]string{"val2": "value_val2", "val3": "value_val3"}, items)
+
+		// TODO need to debug
+		assert.Equal(t, [][]string{{"val1"}, {"val2", "val3"}, {"val2"}, {"val3"}}, calls)
+	})
+
+	t.Run("with errors", func(t *testing.T) {
+		items, errs := batcher.LoadMany(context.Background(), []string{"val4", "err1"})
+		assert.Equal(t, map[string]error{"err1": errors.New("err_err1")}, errs)
+		assert.Equal(t, map[string]string{"val4": "value_val4"}, items)
+
+		// TODO need to debug
+		assert.Equal(t, [][]string{{"val1"}, {"val2", "val3"}, {"val2"}, {"val3"}, {"val4"}, {"err1"}}, calls)
+	})
 }
 
 func TestBatchLoad_MinBatch10(t *testing.T) {
