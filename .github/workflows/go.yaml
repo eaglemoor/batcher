@@ -34,11 +34,11 @@ jobs:
       - name: Test
         run: go test -race -coverprofile=coverage.out -covermode=atomic ./...
       
-      - name: Archive production artifacts
-        uses: actions/upload-artifact@v3
+      - name: Codecov Scan
+        uses: codecov/codecov-action@v3
         with:
-          name: coverage
-          path: coverage.out
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: ./coverage.out
       
       - name: SonarCloud Scan
         uses: SonarSource/sonarcloud-github-action@master
