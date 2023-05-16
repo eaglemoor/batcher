@@ -1,4 +1,4 @@
-[![Go Coverage](https://github.com/eaglemoor/batcher/wiki/coverage.svg)](https://raw.githack.com/wiki/eaglemoor/batcher/coverage.html)
+[![codecov](https://codecov.io/gh/eaglemoor/batcher/branch/init1/graph/badge.svg?token=YR0Z6AL3H5)](https://codecov.io/gh/eaglemoor/batcher)
 
 # batcher
 
