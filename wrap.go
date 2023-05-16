@@ -2,6 +2,7 @@ package batcher
 
 import (
 	"context"
+	"fmt"
 	"time"
 )
 
@@ -26,7 +27,7 @@ func wrapHandler[K comparable, V any](cache Cache[K, V], timeout time.Duration, 
 	return w
 }
 
-func (w *wrapper[K, V]) Handle(ctx context.Context, keys []K) []*Result[V] {
+func (w *wrapper[K, V]) Handle(ctx context.Context, keys []K) (result []*Result[V]) {
 	// Detache ctx if needed
 	if w.timeout > 0 {
 		var cancel func()
@@ -35,6 +36,17 @@ func (w *wrapper[K, V]) Handle(ctx context.Context, keys []K) []*Result[V] {
 	}
 
 	// TODO use cache
+
+	defer func() {
+		if r := recover(); r != nil {
+			err := fmt.Errorf("%w: %#v", ErrPanicRecover, r)
+
+			result = make([]*Result[V], 0, len(keys))
+			for range keys {
+				result = append(result, &Result[V]{Err: err})
+			}
+		}
+	}()
 
 	return w.handler(ctx, keys)
 }

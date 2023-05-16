@@ -28,6 +28,23 @@ func TestBatchLoad_Ok(t *testing.T) {
 	assert.Equal(t, "value_val1", item)
 }
 
+func TestBatchLoad_PanicRecover(t *testing.T) {
+	handlerFn := func(ctx context.Context, keys []string) []*Result[string] {
+		panic(123)
+		result := make([]*Result[string], 0, len(keys))
+		for _, key := range keys {
+			result = append(result, &Result[string]{Value: "value_" + key})
+		}
+
+		return result
+	}
+
+	batcher := New(handlerFn)
+	item, err := batcher.Load(context.Background(), "val1")
+	assert.ErrorIs(t, err, ErrPanicRecover)
+	assert.Equal(t, "", item)
+}
+
 func TestBatchLoadMany_Ok(t *testing.T) {
 	calls := make([][]string, 0, 10)
 	m := sync.Mutex{}
