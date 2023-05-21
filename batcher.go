@@ -44,7 +44,7 @@ func New[K comparable, V any](handler func(ctx context.Context, keys []K) []*Res
 
 	ctx, cancel := context.WithCancel(context.Background())
 
-	hwrap := wrapHandler(o.Cache, o.Timeout, handler)
+	hwrap := wrapHandler(o.Cache, handler)
 
 	b := &Batcher[K, V]{
 		ctx:     ctx,
@@ -101,6 +101,9 @@ func (b *Batcher[K, V]) Load(ctx context.Context, key K) (V, error) {
 		return v, ErrBatcherNotInit
 	}
 
+	ctx, cancel := b.context(ctx)
+	defer cancel()
+
 	waiter := b.load(ctx, key)
 
 	select {
@@ -124,6 +127,9 @@ func (b *Batcher[K, V]) LoadMany(ctx context.Context, keys ...K) (map[K]V, map[K
 
 		return data, errors
 	}
+
+	ctx, cancel := b.context(ctx)
+	defer cancel()
 
 	waiterList := make(map[K]<-chan *Result[V], len(keys))
 	var ok bool
@@ -272,6 +278,16 @@ func (b *Batcher[K, V]) callHandlers(btype batcherType, batch []waiter[K, V]) {
 		}
 		b.mu.Unlock()
 	}
+}
+
+func (b *Batcher[K, V]) context(ctx context.Context) (context.Context, context.CancelFunc) {
+	// Detache ctx if needed
+	if b.opt.Timeout > 0 {
+		ctx, cancel := context.WithTimeout(DetachedContext(ctx), b.opt.Timeout)
+		return ctx, cancel
+	}
+
+	return context.WithCancel(ctx)
 }
 
 func (b *Batcher[K, V]) Shutdown() {

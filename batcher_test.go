@@ -146,6 +146,28 @@ func TestBatchLoad_MinBatch10(t *testing.T) {
 	assert.Less(t, time.Since(startTime).Milliseconds(), int64(20))           // batch < 17ms
 }
 
+func TestBatch_Timeout_ContextDeadlineExceeded(t *testing.T) {
+	handlerFn := func(ctx context.Context, keys []string) []*Result[string] {
+		result := make([]*Result[string], 0, len(keys))
+		for _, key := range keys {
+			result = append(result, &Result[string]{Value: "value_" + key})
+		}
+
+		time.Sleep(time.Second)
+
+		return result
+	}
+
+	batcher := New(handlerFn, Timeout[string, string](time.Millisecond*50))
+
+	start := time.Now()
+	ctx := context.Background()
+	data, err := batcher.Load(ctx, "test1")
+	assert.ErrorIs(t, err, context.DeadlineExceeded)
+	assert.Equal(t, "", data)
+	assert.LessOrEqual(t, time.Since(start).Milliseconds(), int64(60))
+}
+
 func batcherForBench(b *testing.B, opts ...Option[string, string]) (*Batcher[string, string], *map[int]int) {
 	b.Helper()
 
