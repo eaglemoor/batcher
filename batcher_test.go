@@ -168,6 +168,80 @@ func TestBatch_Timeout_ContextDeadlineExceeded(t *testing.T) {
 	assert.LessOrEqual(t, time.Since(start).Milliseconds(), int64(60))
 }
 
+type ctxTestKey string
+
+func TestBatch_ContextValue(t *testing.T) {
+	handlerFn := func(ctx context.Context, keys []string) []*Result[string] {
+		ctxValue := ctx.Value(ctxTestKey("test"))
+
+		result := make([]*Result[string], 0, len(keys))
+		for _, key := range keys {
+			result = append(result, &Result[string]{Value: fmt.Sprintf("value_%s_%v", key, ctxValue)})
+		}
+
+		return result
+	}
+
+	batcher := New(handlerFn, Timeout[string, string](time.Millisecond*50))
+
+	start := time.Now()
+	ctx := context.WithValue(context.Background(), ctxTestKey("test"), "ctxvar")
+	data, err := batcher.Load(ctx, "test1")
+	assert.NoError(t, err)
+	assert.Equal(t, "value_test1_ctxvar", data)
+	assert.LessOrEqual(t, time.Since(start).Milliseconds(), int64(60))
+}
+
+func TestNotInitBatch(t *testing.T) {
+	b := &Batcher[string, string]{}
+
+	ctx := context.Background()
+	var1, err1 := b.Load(ctx, "key1")
+	assert.ErrorIs(t, err1, ErrBatcherNotInit)
+	assert.Empty(t, var1)
+
+	var2, err2 := b.LoadMany(ctx, "key1", "key2")
+	for _, key := range []string{"key1", "key2"} {
+		assert.ErrorIs(t, err2[key], ErrBatcherNotInit)
+	}
+	assert.Empty(t, var2)
+
+	b.shutdown = false
+	b.Shutdown()
+	assert.False(t, b.shutdown)
+
+	assert.Len(t, b.pending, 0)
+}
+
+func TestShotdown_Wait(t *testing.T) {
+	handlerFn := func(ctx context.Context, keys []string) []*Result[string] {
+		result := make([]*Result[string], 0, len(keys))
+		for _, key := range keys {
+			result = append(result, &Result[string]{Value: fmt.Sprintf("value_%s", key)})
+		}
+
+		time.Sleep(time.Millisecond * 200)
+
+		return result
+	}
+
+	b := New(handlerFn)
+
+	start := time.Now()
+	val1, err1 := b.Load(context.Background(), "test1")
+	b.Shutdown()
+
+	assert.NoError(t, err1)
+	assert.Equal(t, "value_test1", val1)
+	assert.GreaterOrEqual(t, time.Since(start).Milliseconds(), int64(200))
+
+	val2, err2 := b.Load(context.Background(), "test2")
+	assert.ErrorIs(t, err2, ErrShotdown)
+	assert.Empty(t, val2)
+}
+
+// ---- Betch -----
+
 func batcherForBench(b *testing.B, opts ...Option[string, string]) (*Batcher[string, string], *map[int]int) {
 	b.Helper()
 

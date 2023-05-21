@@ -2,7 +2,6 @@ package batcher
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -165,7 +164,7 @@ func (b *Batcher[K, V]) load(ctx context.Context, key K) <-chan *Result[V] {
 	c := make(chan *Result[V], 1)
 
 	if b.shutdown {
-		c <- &Result[V]{Err: errors.New("batcher: shut down")}
+		c <- &Result[V]{Err: ErrShotdown}
 		close(c)
 
 		return c
