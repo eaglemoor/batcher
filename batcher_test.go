@@ -75,7 +75,7 @@ func TestBatchLoadMany_Ok(t *testing.T) {
 	batcher := New(handlerFn)
 
 	t.Run("simple", func(t *testing.T) {
-		items, errs := batcher.LoadMany(context.Background(), []string{"val1", "val2", "val3"})
+		items, errs := batcher.LoadMany(context.Background(), "val1", "val2", "val3")
 		assert.Empty(t, errs)
 		assert.Equal(t, map[string]string{"val1": "value_val1", "val2": "value_val2", "val3": "value_val3"}, items)
 
@@ -84,7 +84,7 @@ func TestBatchLoadMany_Ok(t *testing.T) {
 	})
 
 	t.Run("double keys", func(t *testing.T) {
-		items, errs := batcher.LoadMany(context.Background(), []string{"val2", "val2", "val3"})
+		items, errs := batcher.LoadMany(context.Background(), "val2", "val2", "val3")
 		assert.Empty(t, errs)
 		assert.Equal(t, map[string]string{"val2": "value_val2", "val3": "value_val3"}, items)
 
@@ -93,7 +93,7 @@ func TestBatchLoadMany_Ok(t *testing.T) {
 	})
 
 	t.Run("with errors", func(t *testing.T) {
-		items, errs := batcher.LoadMany(context.Background(), []string{"val4", "err1"})
+		items, errs := batcher.LoadMany(context.Background(), "val4", "err1")
 		assert.Equal(t, map[string]error{"err1": errors.New("err_err1")}, errs)
 		assert.Equal(t, map[string]string{"val4": "value_val4"}, items)
 
@@ -146,7 +146,7 @@ func TestBatchLoad_MinBatch10(t *testing.T) {
 	assert.Less(t, time.Since(startTime).Milliseconds(), int64(20))           // batch < 17ms
 }
 
-func batcherForBench(b *testing.B, opts ...Option[string, string]) (*batcher[string, string], *map[int]int) {
+func batcherForBench(b *testing.B, opts ...Option[string, string]) (*Batcher[string, string], *map[int]int) {
 	b.Helper()
 
 	calls := make(map[int]int, 100)

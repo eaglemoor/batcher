@@ -3,5 +3,6 @@ package batcher
 import "errors"
 
 var (
-	ErrPanicRecover = errors.New("panic recover on handler func")
+	ErrBatcherNotInit = errors.New("use batcher.New for create and init batcher")
+	ErrPanicRecover   = errors.New("panic recover on handler func")
 )
