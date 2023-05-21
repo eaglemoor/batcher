@@ -11,10 +11,6 @@ jaeger:
 test:
 	go test -race ./...
 
-.PHONY: test-integration
-test-integration:
-	go test -race --tags=integration ./...
-
 .PHONY: up
 up:
 	docker-compose up -d
