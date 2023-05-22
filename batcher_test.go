@@ -15,10 +15,10 @@ import (
 )
 
 func TestBatchLoad_Ok(t *testing.T) {
-	handlerFn := func(ctx context.Context, keys []string) []*Result[string] {
-		result := make([]*Result[string], 0, len(keys))
+	handlerFn := func(ctx context.Context, keys []string) []*Result[string, string] {
+		result := make([]*Result[string, string], 0, len(keys))
 		for _, key := range keys {
-			result = append(result, &Result[string]{Value: "value_" + key})
+			result = append(result, &Result[string, string]{Key: key, Value: "value_" + key})
 		}
 
 		return result
@@ -31,11 +31,11 @@ func TestBatchLoad_Ok(t *testing.T) {
 }
 
 func TestBatchLoad_PanicRecover(t *testing.T) {
-	handlerFn := func(ctx context.Context, keys []string) []*Result[string] {
+	handlerFn := func(ctx context.Context, keys []string) []*Result[string, string] {
 		panic(123)
-		result := make([]*Result[string], 0, len(keys))
+		result := make([]*Result[string, string], 0, len(keys))
 		for _, key := range keys {
-			result = append(result, &Result[string]{Value: "value_" + key})
+			result = append(result, &Result[string, string]{Key: key, Value: "value_" + key})
 		}
 
 		return result
@@ -51,14 +51,14 @@ func TestBatchLoadMany_Ok(t *testing.T) {
 	calls := make([][]string, 0, 10)
 	m := sync.Mutex{}
 
-	handlerFn := func(ctx context.Context, keys []string) []*Result[string] {
+	handlerFn := func(ctx context.Context, keys []string) []*Result[string, string] {
 		m.Lock()
 		calls = append(calls, keys)
 		m.Unlock()
 
-		result := make([]*Result[string], 0, len(keys))
+		result := make([]*Result[string, string], 0, len(keys))
 		for _, key := range keys {
-			raw := &Result[string]{}
+			raw := &Result[string, string]{Key: key}
 
 			if !strings.HasPrefix(key, "err") {
 				raw.Value = "value_" + key
@@ -105,14 +105,14 @@ func TestBatchLoadMany_Ok(t *testing.T) {
 func TestBatchLoad_MinBatch10(t *testing.T) {
 	calls := make([][]string, 0, 10)
 	var mu sync.Mutex
-	handlerFn := func(ctx context.Context, keys []string) []*Result[string] {
+	handlerFn := func(ctx context.Context, keys []string) []*Result[string, string] {
 		mu.Lock()
 		calls = append(calls, keys)
 		mu.Unlock()
 
-		result := make([]*Result[string], 0, len(keys))
+		result := make([]*Result[string, string], 0, len(keys))
 		for _, key := range keys {
-			result = append(result, &Result[string]{Value: "value_" + key})
+			result = append(result, &Result[string, string]{Key: key, Value: "value_" + key})
 		}
 
 		return result
@@ -147,10 +147,10 @@ func TestBatchLoad_MinBatch10(t *testing.T) {
 }
 
 func TestBatch_Timeout_ContextDeadlineExceeded(t *testing.T) {
-	handlerFn := func(ctx context.Context, keys []string) []*Result[string] {
-		result := make([]*Result[string], 0, len(keys))
+	handlerFn := func(ctx context.Context, keys []string) []*Result[string, string] {
+		result := make([]*Result[string, string], 0, len(keys))
 		for _, key := range keys {
-			result = append(result, &Result[string]{Value: "value_" + key})
+			result = append(result, &Result[string, string]{Key: key, Value: "value_" + key})
 		}
 
 		time.Sleep(time.Second)
@@ -171,12 +171,12 @@ func TestBatch_Timeout_ContextDeadlineExceeded(t *testing.T) {
 type ctxTestKey string
 
 func TestBatch_ContextValue(t *testing.T) {
-	handlerFn := func(ctx context.Context, keys []string) []*Result[string] {
+	handlerFn := func(ctx context.Context, keys []string) []*Result[string, string] {
 		ctxValue := ctx.Value(ctxTestKey("test"))
 
-		result := make([]*Result[string], 0, len(keys))
+		result := make([]*Result[string, string], 0, len(keys))
 		for _, key := range keys {
-			result = append(result, &Result[string]{Value: fmt.Sprintf("value_%s_%v", key, ctxValue)})
+			result = append(result, &Result[string, string]{Key: key, Value: fmt.Sprintf("value_%s_%v", key, ctxValue)})
 		}
 
 		return result
@@ -214,10 +214,10 @@ func TestNotInitBatch(t *testing.T) {
 }
 
 func TestShotdown_Wait(t *testing.T) {
-	handlerFn := func(ctx context.Context, keys []string) []*Result[string] {
-		result := make([]*Result[string], 0, len(keys))
+	handlerFn := func(ctx context.Context, keys []string) []*Result[string, string] {
+		result := make([]*Result[string, string], 0, len(keys))
 		for _, key := range keys {
-			result = append(result, &Result[string]{Value: fmt.Sprintf("value_%s", key)})
+			result = append(result, &Result[string, string]{Key: key, Value: fmt.Sprintf("value_%s", key)})
 		}
 
 		time.Sleep(time.Millisecond * 200)
@@ -248,16 +248,16 @@ func batcherForBench(b *testing.B, opts ...Option[string, string]) (*Batcher[str
 	calls := make(map[int]int, 100)
 	var m sync.Mutex
 
-	handlerFn := func(ctx context.Context, keys []string) []*Result[string] {
+	handlerFn := func(ctx context.Context, keys []string) []*Result[string, string] {
 		m.Lock()
 		calls[len(keys)]++
 		m.Unlock()
 
 		// b.Logf("bench keys: %d\n", len(keys))
 
-		result := make([]*Result[string], 0, len(keys))
+		result := make([]*Result[string, string], 0, len(keys))
 		for _, key := range keys {
-			result = append(result, &Result[string]{Value: "value_" + key})
+			result = append(result, &Result[string, string]{Key: key, Value: "value_" + key})
 		}
 
 		time.Sleep(60 * time.Millisecond)
@@ -269,12 +269,15 @@ func batcherForBench(b *testing.B, opts ...Option[string, string]) (*Batcher[str
 }
 
 func BenchmarkBatcher_load(b *testing.B) {
-	batcher, calls := batcherForBench(b, MaxHandlers[string, string](100), MaxBatchSize[string, string](100), MinBatchSize[string, string](20))
+	batcher, calls := batcherForBench(b, MaxBatcher[string, string](100), MaxBatchSize[string, string](100), MinBatchSize[string, string](20))
 	ctx := context.Background()
 	b.ResetTimer()
 
+	res := make(chan *Result[string, string], 1)
+	defer close(res)
+
 	for i := 0; i < b.N; i++ {
-		batcher.load(ctx, strconv.Itoa(i))
+		batcher.load(ctx, strconv.Itoa(i), res)
 	}
 
 	batcher.Shutdown()

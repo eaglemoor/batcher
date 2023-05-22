@@ -26,7 +26,7 @@ func init() {
 	})
 }
 
-func batch[K comparable, V any](name string, withCache bool, bfn func(context.Context, []K) []*batcher.Result[V]) *batcher.Batcher[K, V] {
+func batch[K comparable, V any](name string, withCache bool, bfn func(context.Context, []K) []*batcher.Result[K, V]) *batcher.Batcher[K, V] {
 	opts := []batcher.Option[K, V]{}
 	if withCache {
 		c := New[K, V](name, redisClient, 0)
@@ -49,17 +49,20 @@ func TestRedisCache(t *testing.T) {
 
 	calls := make([][]int, 0, 10)
 	var mu sync.Mutex
-	b := batch[int, User]("users", true, func(ctx context.Context, keys []int) []*batcher.Result[User] {
+	b := batch[int, User]("users", true, func(ctx context.Context, keys []int) []*batcher.Result[int, User] {
 		mu.Lock()
 		calls = append(calls, keys)
 		mu.Unlock()
 
-		result := make([]*batcher.Result[User], 0, len(keys))
+		result := make([]*batcher.Result[int, User], 0, len(keys))
 		for _, k := range keys {
-			result = append(result, &batcher.Result[User]{Value: User{
-				ID:       k,
-				UserName: fmt.Sprintf("User #%d", k),
-			}})
+			result = append(result, &batcher.Result[int, User]{
+				Key: k,
+				Value: User{
+					ID:       k,
+					UserName: fmt.Sprintf("User #%d", k),
+				},
+			})
 		}
 
 		return result

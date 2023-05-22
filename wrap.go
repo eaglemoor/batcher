@@ -6,12 +6,12 @@ import (
 )
 
 type wrapper[K comparable, V any] struct {
-	handler      func(context.Context, []K) []*Result[V]
+	handler      func(context.Context, []K) []*Result[K, V]
 	cache        Cache[K, V]
 	cacheGetMany CacheGetMany[K, V]
 }
 
-func wrapHandler[K comparable, V any](cache Cache[K, V], handler func(context.Context, []K) []*Result[V]) *wrapper[K, V] {
+func wrapHandler[K comparable, V any](cache Cache[K, V], handler func(context.Context, []K) []*Result[K, V]) *wrapper[K, V] {
 	w := &wrapper[K, V]{handler: handler}
 
 	if cache != nil {
@@ -25,14 +25,14 @@ func wrapHandler[K comparable, V any](cache Cache[K, V], handler func(context.Co
 	return w
 }
 
-func (w *wrapper[K, V]) Handle(ctx context.Context, keys []K) (result []*Result[V]) {
+func (w *wrapper[K, V]) Handle(ctx context.Context, keys []K) (result []*Result[K, V]) {
 	defer func() {
 		if r := recover(); r != nil {
 			err := fmt.Errorf("%w: %#v", ErrPanicRecover, r)
 
-			result = make([]*Result[V], 0, len(keys))
-			for range keys {
-				result = append(result, &Result[V]{Err: err})
+			result = make([]*Result[K, V], 0, len(keys))
+			for _, key := range keys {
+				result = append(result, &Result[K, V]{Key: key, Err: err})
 			}
 		}
 	}()
@@ -43,7 +43,7 @@ func (w *wrapper[K, V]) Handle(ctx context.Context, keys []K) (result []*Result[
 
 	newkeys := scoringKey(keys)
 
-	resultMap := make(map[K]*Result[V], len(keys))
+	resultMap := make(map[K]*Result[K, V], len(keys))
 	uniqK := make(map[K]struct{}, len(keys))
 	reqK := make([]K, 0, len(keys))
 	var ok bool
@@ -52,7 +52,7 @@ func (w *wrapper[K, V]) Handle(ctx context.Context, keys []K) (result []*Result[
 		items := w.cacheGetMany.GetMany(ctx, newkeys)
 
 		for k, v := range items {
-			resultMap[k] = &Result[V]{Value: v}
+			resultMap[k] = &Result[K, V]{Key: k, Value: v}
 			uniqK[k] = struct{}{}
 		}
 
@@ -73,7 +73,7 @@ func (w *wrapper[K, V]) Handle(ctx context.Context, keys []K) (result []*Result[
 
 			val, valok := w.cache.Get(ctx, k)
 			if valok {
-				resultMap[k] = &Result[V]{Value: val}
+				resultMap[k] = &Result[K, V]{Key: k, Value: val}
 			} else {
 				reqK = append(reqK, k)
 			}
@@ -94,26 +94,10 @@ func (w *wrapper[K, V]) Handle(ctx context.Context, keys []K) (result []*Result[
 		}
 	}
 
-	result = make([]*Result[V], 0, len(keys))
+	result = make([]*Result[K, V], 0, len(keys))
 	for _, key := range keys {
 		if val, ok := resultMap[key]; ok {
 			result = append(result, val)
-		}
-	}
-
-	return result
-}
-
-func scoringKey[K comparable](keys []K) []K {
-	keymap := make(map[K]struct{}, len(keys))
-	result := make([]K, 0, len(keys))
-
-	var ok bool
-	for _, key := range keys {
-		_, ok = keymap[key]
-		if !ok {
-			keymap[key] = struct{}{}
-			result = append(result, key)
 		}
 	}
 

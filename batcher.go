@@ -23,17 +23,18 @@ const (
 	TimerBatcher
 )
 
-type Result[V any] struct {
+type Result[K comparable, V any] struct {
+	Key   K
 	Value V
 	Err   error
 }
 
 // New create new batcher
-func New[K comparable, V any](handler func(ctx context.Context, keys []K) []*Result[V], opts ...Option[K, V]) *Batcher[K, V] {
+func New[K comparable, V any](handler func(ctx context.Context, keys []K) []*Result[K, V], opts ...Option[K, V]) *Batcher[K, V] {
 	o := &opt[K, V]{
 		MaxBatchSize: DefaultMaxBatchSize,
 		MinBatchSize: DefaultMinBatchSize,
-		MaxHandlers:  DefaultMaxHandlers,
+		MaxBatcher:   DefaultMaxHandlers,
 		Ticker:       DefaultTicker,
 	}
 
@@ -52,7 +53,7 @@ func New[K comparable, V any](handler func(ctx context.Context, keys []K) []*Res
 		pending: make([]waiter[K, V], 0, o.MaxBatchSize),
 		cancel:  cancel,
 	}
-	go b.batchTicker()
+	go b.runTimeBatch()
 
 	return b
 }
@@ -61,20 +62,20 @@ type Batcher[K comparable, V any] struct {
 	ctx context.Context
 
 	opt     *opt[K, V]
-	handler func(context.Context, []K) []*Result[V]
+	handler func(context.Context, []K) []*Result[K, V]
 
 	pending []waiter[K, V]
 	mu      sync.Mutex
 
-	nHandlers int
-	wg        sync.WaitGroup
+	batcherCount int
+	wg           sync.WaitGroup
 
 	cancel   func()
 	shutdown bool
 }
 
-// batchTicker start b.runBatch every b.opt.Ticker time for process stuck data
-func (b *Batcher[K, V]) batchTicker() {
+// runTimeBatch start b.runBatch every b.opt.Ticker time for process stuck data
+func (b *Batcher[K, V]) runTimeBatch() {
 	limiter := rate.NewLimiter(rate.Every(b.opt.Ticker), 1)
 	for limiter.Wait(b.ctx) == nil {
 		func() {
@@ -89,7 +90,7 @@ func (b *Batcher[K, V]) batchTicker() {
 type waiter[K comparable, V any] struct {
 	ctx context.Context
 	key K
-	res chan *Result[V]
+	res chan *Result[K, V]
 }
 
 // Load load data with key and return value and error
@@ -103,7 +104,10 @@ func (b *Batcher[K, V]) Load(ctx context.Context, key K) (V, error) {
 	ctx, cancel := b.context(ctx)
 	defer cancel()
 
-	waiter := b.load(ctx, key)
+	waiter := make(chan *Result[K, V], 1)
+	defer close(waiter)
+
+	b.load(ctx, key, waiter)
 
 	select {
 	case res := <-waiter:
@@ -127,54 +131,57 @@ func (b *Batcher[K, V]) LoadMany(ctx context.Context, keys ...K) (map[K]V, map[K
 		return data, errors
 	}
 
+	if len(keys) == 0 {
+		return data, errors
+	}
+
+	// remove double
+	keys = scoringKey(keys)
+
+	// wrap context
 	ctx, cancel := b.context(ctx)
 	defer cancel()
 
-	waiterList := make(map[K]<-chan *Result[V], len(keys))
-	var ok bool
+	// channel for read result
+	waiterlist := make(chan *Result[K, V], len(keys))
 	for _, key := range keys {
-		if _, ok = waiterList[key]; ok {
-			continue
-		}
-
-		waiterList[key] = b.load(ctx, key)
+		b.load(ctx, key, waiterlist)
 	}
 
-	// Need read all channel
-	for key, wt := range waiterList {
+	c := len(keys)
+
+	for c > 0 {
 		select {
-		case res := <-wt:
-			if res.Err != nil {
-				errors[key] = res.Err
-			} else {
-				data[key] = res.Value
-			}
 		case <-ctx.Done():
-			errors[key] = ctx.Err()
+			// enrich the result with errors
+			enrichErrors(keys, data, errors, ctx.Err())
+
+			return data, errors
+
+		case res := <-waiterlist:
+			if res.Err != nil {
+				errors[res.Key] = res.Err
+			} else {
+				data[res.Key] = res.Value
+			}
+			c--
 		}
 	}
 
 	return data, errors
 }
 
-func (b *Batcher[K, V]) load(ctx context.Context, key K) <-chan *Result[V] {
+func (b *Batcher[K, V]) load(ctx context.Context, key K, result chan *Result[K, V]) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	c := make(chan *Result[V], 1)
-
 	if b.shutdown {
-		c <- &Result[V]{Err: ErrShotdown}
-		close(c)
-
-		return c
+		result <- &Result[K, V]{Key: key, Err: ErrShotdown}
 	}
 
-	b.pending = append(b.pending, waiter[K, V]{ctx: ctx, key: key, res: c})
+	b.pending = append(b.pending, waiter[K, V]{ctx: ctx, key: key, res: result})
 
 	b.runBatch(MainBatcher)
-
-	return c
 }
 
 // runBatch checks the number of valid threads and pending data and starts a new thread to process the data.
@@ -183,7 +190,7 @@ func (b *Batcher[K, V]) runBatch(btype batcherType) {
 	// If the number of threads is the maximum, we do not create a new one.
 	// We do not create a batcher "TimerBatcher", because the maximum number of threads shows
 	// the optimal operation of the system (all keys are taken)
-	if b.nHandlers >= b.opt.MaxHandlers {
+	if b.batcherCount >= b.opt.MaxBatcher {
 		return
 	}
 
@@ -194,7 +201,7 @@ func (b *Batcher[K, V]) runBatch(btype batcherType) {
 			b.callHandlers(btype, batch)
 			b.wg.Done()
 		}()
-		b.nHandlers++
+		b.batcherCount++
 	}
 }
 
@@ -230,10 +237,7 @@ func (b *Batcher[K, V]) nextBatch(btype batcherType) (bch []waiter[K, V]) {
 // After processing the batch tries to get a new data packet. If pending data is empty
 func (b *Batcher[K, V]) callHandlers(btype batcherType, batch []waiter[K, V]) {
 	for len(batch) > 0 {
-		ctx := context.Background()
-		if len(batch) > 0 {
-			ctx = batch[0].ctx
-		}
+		ctx := batch[0].ctx
 
 		keys := make([]K, 0, len(batch))
 		for _, item := range batch {
@@ -242,7 +246,7 @@ func (b *Batcher[K, V]) callHandlers(btype batcherType, batch []waiter[K, V]) {
 
 		items := b.handler(ctx, keys)
 		if len(keys) != len(items) {
-			err := &Result[V]{Err: fmt.Errorf(`
+			err := fmt.Errorf(`
 				The batch function supplied did not return an array of responses
 				the same length as the array of keys.
 
@@ -251,16 +255,14 @@ func (b *Batcher[K, V]) callHandlers(btype batcherType, batch []waiter[K, V]) {
 
 				Values:
 				%v
-			`, keys, items)}
+			`, keys, items)
 
 			for _, item := range batch {
-				item.res <- err
-				close(item.res)
+				item.res <- &Result[K, V]{Key: item.key, Err: err}
 			}
 		} else {
 			for i := range batch {
 				batch[i].res <- items[i]
-				close(batch[i].res)
 			}
 		}
 
@@ -273,7 +275,7 @@ func (b *Batcher[K, V]) callHandlers(btype batcherType, batch []waiter[K, V]) {
 		}
 		batch = b.nextBatch(btype)
 		if len(batch) == 0 {
-			b.nHandlers--
+			b.batcherCount--
 		}
 		b.mu.Unlock()
 	}
