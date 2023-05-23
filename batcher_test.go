@@ -80,7 +80,7 @@ func TestBatchLoadMany_Ok(t *testing.T) {
 		assert.Equal(t, map[string]string{"val1": "value_val1", "val2": "value_val2", "val3": "value_val3"}, items)
 
 		// TODO need to debug
-		assert.Equal(t, [][]string{{"val1"}, {"val2", "val3"}}, calls)
+		assert.Equal(t, [][]string{{"val1", "val2", "val3"}}, calls)
 	})
 
 	t.Run("double keys", func(t *testing.T) {
@@ -89,7 +89,7 @@ func TestBatchLoadMany_Ok(t *testing.T) {
 		assert.Equal(t, map[string]string{"val2": "value_val2", "val3": "value_val3"}, items)
 
 		// TODO need to debug
-		assert.Equal(t, [][]string{{"val1"}, {"val2", "val3"}, {"val2"}, {"val3"}}, calls)
+		assert.Equal(t, [][]string{{"val1", "val2", "val3"}, {"val2", "val3"}}, calls)
 	})
 
 	t.Run("with errors", func(t *testing.T) {
@@ -98,7 +98,7 @@ func TestBatchLoadMany_Ok(t *testing.T) {
 		assert.Equal(t, map[string]string{"val4": "value_val4"}, items)
 
 		// TODO need to debug
-		assert.Equal(t, [][]string{{"val1"}, {"val2", "val3"}, {"val2"}, {"val3"}, {"val4"}, {"err1"}}, calls)
+		assert.Equal(t, [][]string{{"val1", "val2", "val3"}, {"val2", "val3"}, {"val4", "err1"}}, calls)
 	})
 }
 
@@ -268,6 +268,32 @@ func batcherForBench(b *testing.B, opts ...Option[string, string]) (*Batcher[str
 	return New(handlerFn, opts...), &calls
 }
 
+func TestLoadMany_WithCloseChannel(t *testing.T) {
+	b := New[string, string](func(ctx context.Context, keys []string) []*Result[string, string] {
+		result := make([]*Result[string, string], 0, len(keys))
+		for _, key := range keys {
+			result = append(result, &Result[string, string]{Key: key, Value: "value_" + key})
+		}
+
+		time.Sleep(time.Millisecond * 50)
+
+		return result
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Millisecond*10)
+	defer cancel()
+
+	items, errors := b.LoadMany(ctx, "test1", "test2", "test3")
+	assert.Len(t, errors, 3)
+	for _, err := range errors {
+		assert.ErrorIs(t, err, context.DeadlineExceeded)
+	}
+	assert.Empty(t, items)
+
+	// wait for panic: send on closed channel
+	time.Sleep(time.Millisecond * 100)
+}
+
 func BenchmarkBatcher_load(b *testing.B) {
 	batcher, calls := batcherForBench(b, MaxBatcher[string, string](100), MaxBatchSize[string, string](100), MinBatchSize[string, string](20))
 	ctx := context.Background()
@@ -277,7 +303,7 @@ func BenchmarkBatcher_load(b *testing.B) {
 	defer close(res)
 
 	for i := 0; i < b.N; i++ {
-		batcher.load(ctx, strconv.Itoa(i), res)
+		batcher.load(newWaiter[string, string](ctx, strconv.Itoa(i), res))
 	}
 
 	batcher.Shutdown()
