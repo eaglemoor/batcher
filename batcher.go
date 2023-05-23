@@ -182,7 +182,7 @@ func (b *Batcher[K, V]) load(waiterlist ...*waiter[K, V]) {
 
 	if b.shutdown {
 		for _, wl := range waiterlist {
-			wl.Error(ErrShotdown)
+			wl.Error(ErrShutdown)
 			wl.Close()
 		}
 		return

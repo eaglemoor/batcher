@@ -236,7 +236,7 @@ func TestShotdown_Wait(t *testing.T) {
 	assert.GreaterOrEqual(t, time.Since(start).Milliseconds(), int64(200))
 
 	val2, err2 := b.Load(context.Background(), "test2")
-	assert.ErrorIs(t, err2, ErrShotdown)
+	assert.ErrorIs(t, err2, ErrShutdown)
 	assert.Empty(t, val2)
 }
 

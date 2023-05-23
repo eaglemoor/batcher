@@ -14,6 +14,9 @@ type waiter[K comparable, V any] struct {
 	mu       sync.Mutex
 }
 
+// newWaiter create waiter for processing data
+// closing the channel on the side of the creator
+// before closing the channel, you need to call the close method
 func newWaiter[K comparable, V any](ctx context.Context, key K, responseChannel chan *Result[K, V]) *waiter[K, V] {
 	return &waiter[K, V]{
 		ctx: ctx,
@@ -41,6 +44,8 @@ func (w *waiter[K, V]) Value() <-chan *Result[K, V] {
 	return w.res
 }
 
+// Close waiter for all new data
+// Using waiter.Close before close response cannel
 func (w *waiter[K, V]) Close() {
 	w.mu.Lock()
 	defer w.mu.Unlock()
