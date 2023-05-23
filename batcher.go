@@ -144,6 +144,8 @@ func (b *Batcher[K, V]) LoadMany(ctx context.Context, keys ...K) (map[K]V, map[K
 
 	// channel for read result
 	waiterlist := make(chan *Result[K, V], len(keys))
+	defer close(waiterlist)
+
 	for _, key := range keys {
 		b.load(ctx, key, waiterlist)
 	}
