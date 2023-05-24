@@ -18,3 +18,9 @@ up:
 .PHONY: down
 down:
 	docker-compose down
+
+.PHONY: gen
+gen:
+	cd example/a && protoc --go_out=./pb --go_opt=paths=source_relative \
+		--go-grpc_out=./pb --go-grpc_opt=paths=source_relative \
+		a.proto

@@ -35,3 +35,9 @@ On the first pass, such a batcher picks up all pending records where 0 < n < the
 
 After the first pass is completed and until a new data patch is received, the batcher changes its type to the `MainBatcher` and then will work like a regular batcher that waits for a full batch of data or ends.
 This is correct to ensure that we do not have a bunch of batchers that will fetch the amount of data less than the minimum bucket size.
+
+# example
+
+[grpc server](./example/a/) - Grpc server with method `PersonByIDs(context.Context, []int32)`
+
+[simpe example](./example/simple/) - Simple example how to use batcher

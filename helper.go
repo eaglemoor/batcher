@@ -34,3 +34,13 @@ func scoringKey[K comparable](keys []K) []K {
 
 	return result
 }
+
+// FailResult return slice of Result with error
+func FailResult[K comparable, V any](keys []K, err error) []*Result[K, V] {
+	result := make([]*Result[K, V], 0, len(keys))
+	for _, key := range keys {
+		result = append(result, &Result[K, V]{Key: key, Err: err})
+	}
+
+	return result
+}
