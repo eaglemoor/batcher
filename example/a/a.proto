@@ -1,0 +1,35 @@
+syntax = "proto3";
+package a;
+
+option go_package = "github.com/eaglemoor/batcher/example/a/pb";
+
+service ExampleA {
+  rpc PersonByIDs(PersonRequest) returns (PersonResponse) {}
+}
+
+message PersonRequest {
+  repeated int32 id = 1;
+}
+
+message PersonResponse {
+  repeated Person people = 1;
+}
+
+message Person {
+    string name = 1;
+    int32 id = 2;  // Unique ID number for this person.
+    string email = 3;
+  
+    enum PhoneType {
+      MOBILE = 0;
+      HOME = 1;
+      WORK = 2;
+    }
+  
+    message PhoneNumber {
+      string number = 1;
+      PhoneType type = 2;
+    }
+  
+    repeated PhoneNumber phones = 4;
+}
