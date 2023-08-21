@@ -6,13 +6,13 @@ import (
 )
 
 type wrapper[K comparable, V any] struct {
-	handler      func(context.Context, []K) []*Result[K, V]
+	batchFunc    func(context.Context, []K) []*Result[K, V]
 	cache        Cache[K, V]
 	cacheGetMany CacheGetMany[K, V]
 }
 
-func wrapHandler[K comparable, V any](cache Cache[K, V], handler func(context.Context, []K) []*Result[K, V]) *wrapper[K, V] {
-	w := &wrapper[K, V]{handler: handler}
+func wrapBatchFunc[K comparable, V any](cache Cache[K, V], batchFunc BatchFunc[K, V]) *wrapper[K, V] {
+	w := &wrapper[K, V]{batchFunc: batchFunc}
 
 	if cache != nil {
 		w.cache = cache
@@ -38,7 +38,7 @@ func (w *wrapper[K, V]) Handle(ctx context.Context, keys []K) (result []*Result[
 	}()
 
 	if w.cache == nil {
-		return w.handler(ctx, keys)
+		return w.batchFunc(ctx, keys)
 	}
 
 	newkeys := scoringKey(keys)
@@ -83,7 +83,7 @@ func (w *wrapper[K, V]) Handle(ctx context.Context, keys []K) (result []*Result[
 	}
 
 	if len(reqK) > 0 {
-		items := w.handler(ctx, reqK)
+		items := w.batchFunc(ctx, reqK)
 		for i, item := range items {
 			k := reqK[i]
 			resultMap[k] = item

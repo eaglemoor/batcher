@@ -29,8 +29,10 @@ type Result[K comparable, V any] struct {
 	Err   error
 }
 
+type BatchFunc[K comparable, V any] func(ctx context.Context, keys []K) []*Result[K, V]
+
 // New create new batcher
-func New[K comparable, V any](handler func(ctx context.Context, keys []K) []*Result[K, V], opts ...Option[K, V]) *Batcher[K, V] {
+func New[K comparable, V any](batchFunc BatchFunc[K, V], opts ...Option[K, V]) *Batcher[K, V] {
 	o := &opt[K, V]{
 		MaxBatchSize: DefaultMaxBatchSize,
 		MinBatchSize: DefaultMinBatchSize,
@@ -44,7 +46,7 @@ func New[K comparable, V any](handler func(ctx context.Context, keys []K) []*Res
 
 	ctx, cancel := context.WithCancel(context.Background())
 
-	hwrap := wrapHandler(o.Cache, handler)
+	hwrap := wrapBatchFunc(o.Cache, batchFunc)
 
 	b := &Batcher[K, V]{
 		ctx:     ctx,
